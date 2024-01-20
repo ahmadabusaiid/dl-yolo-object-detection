@@ -1,10 +1,19 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.ipynb_checkpoints/
 *.py[cod]
 *$py.class
 
 # data
 data/
+data_dota/
+data_fashion/
 
 # checkpoints
 checkpoints/
+
+# logs
+logs/
+
+# extra for yolos
+extra/

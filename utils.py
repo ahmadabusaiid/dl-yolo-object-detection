@@ -214,6 +214,7 @@ def plot_image(image, boxes):
     # box[1] is y midpoint, box[3] is height
 
     # Create a Rectangle potch
+
     for box in boxes:
         box = box[2:]
         assert len(box) == 4, "Got more values than in x, y, w, h, in a box!"
@@ -240,6 +241,8 @@ def get_bboxes(
     pred_format="cells",
     box_format="midpoint",
     device="cuda",
+    num_classes=20,
+    S=7
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     all_pred_boxes = []
@@ -257,8 +260,10 @@ def get_bboxes(
             predictions = model(x)
 
         batch_size = x.shape[0]
-        true_bboxes = cellboxes_to_boxes(labels)
-        bboxes = cellboxes_to_boxes(predictions)
+        true_bboxes = cellboxes_to_boxes(labels, S=S, B=2, C=num_classes)
+        bboxes = cellboxes_to_boxes(predictions, S=S, B=2, C=num_classes)
+        # print(f"\ntrue bboxes shape: {np.array(true_bboxes).shape}")
+        # print(f"pred bboxes shape: {np.array(bboxes).shape}\n")
 
         for idx in range(batch_size):
             nms_boxes = non_max_suppression(
@@ -287,8 +292,7 @@ def get_bboxes(
     return all_pred_boxes, all_true_boxes
 
 
-
-def convert_cellboxes(predictions, S=7):
+def convert_cellboxes(predictions, S=7, B=2, C=20):
     """
     Converts bounding boxes output from Yolo with
     an image split size of S into entire image ratios
@@ -301,32 +305,30 @@ def convert_cellboxes(predictions, S=7):
 
     predictions = predictions.to("cpu")
     batch_size = predictions.shape[0]
-    predictions = predictions.reshape(batch_size, 7, 7, 30)
-    bboxes1 = predictions[..., 21:25]
-    bboxes2 = predictions[..., 26:30]
+    predictions = predictions.reshape(batch_size, S, S, C + B * 5)
+    bboxes1 = predictions[..., -9:-5]
+    bboxes2 = predictions[..., -4:]
     scores = torch.cat(
-        (predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0
+        (predictions[..., C].unsqueeze(0), predictions[..., (C + B * 5)-5].unsqueeze(0)), dim=0
     )
     best_box = scores.argmax(0).unsqueeze(-1)
     best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2
-    cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1)
+    cell_indices = torch.arange(S).repeat(batch_size, S, 1).unsqueeze(-1)
     x = 1 / S * (best_boxes[..., :1] + cell_indices)
     y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
     w_y = 1 / S * best_boxes[..., 2:4]
     converted_bboxes = torch.cat((x, y, w_y), dim=-1)
-    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1)
-    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(
+    predicted_class = predictions[..., :C].argmax(-1).unsqueeze(-1)
+    best_confidence = torch.max(predictions[..., C], predictions[..., (C + B * 5)-5]).unsqueeze(
         -1
     )
     converted_preds = torch.cat(
         (predicted_class, best_confidence, converted_bboxes), dim=-1
     )
-
     return converted_preds
 
-
-def cellboxes_to_boxes(out, S=7):
-    converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1)
+def cellboxes_to_boxes(out, S=7, B=2, C=20):
+    converted_pred = convert_cellboxes(out, S, B, C).reshape(out.shape[0], S * S, -1)
     converted_pred[..., 0] = converted_pred[..., 0].long()
     all_bboxes = []
 
@@ -336,7 +338,6 @@ def cellboxes_to_boxes(out, S=7):
         for bbox_idx in range(S * S):
             bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
         all_bboxes.append(bboxes)
-
     return all_bboxes
 
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
@@ -348,3 +349,42 @@ def load_checkpoint(checkpoint, model, optimizer):
     print("=> Loading checkpoint")
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
+
+def plot_image_2(image, boxes):
+    """Plots predicted bounding boxes on the image"""
+    im = np.array(image)
+    height, width, _ = im.shape
+ 
+    # Create figure and axes
+    fig, ax = plt.subplots(1)
+    # Display the image
+    ax.imshow(im)
+ 
+    # box[0] is x midpoint, box[2] is width
+    # box[1] is y midpoint, box[3] is height
+ 
+    # Create a Rectangle potch
+ 
+    # print("boxes: ",boxes)
+    idx_to_label = {0:"aeroplane",1:"bicycle",2:"bird",3:"boat",4:"bottle",5:"bus",6:"car",7:"cat",8:"chair",9:"cow",10:"diningtable",
+                    11:"dog",12:"horse",13:"motorbike",14:"person",15:"pottedplant",16:"sheep",17:"sofa",18:"train",19:"tvmonitor"}
+ 
+    for box in boxes:
+        label = idx_to_label[int(box[0])]
+        box = box[2:]
+        assert len(box) == 4, "Got more values than in x, y, w, h, in a box!"
+        upper_left_x = box[0] - box[2] / 2
+        upper_left_y = box[1] - box[3] / 2
+        rect = patches.Rectangle(
+            (upper_left_x * width, upper_left_y * height),
+            box[2] * width,
+            box[3] * height,
+            linewidth=1,
+            edgecolor="r",
+            facecolor="none",
+        )
+        # Add the patch to the Axes
+        ax.add_patch(rect)
+        ax.text(upper_left_x * width, upper_left_y * height, label, color='b', verticalalignment='bottom', bbox=dict(facecolor='white', alpha=0.7))
+ 
+    plt.show()
